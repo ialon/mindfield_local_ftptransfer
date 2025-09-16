@@ -79,6 +79,14 @@ if ($hassiteconfig) {
     );
     $settings->add($setting);
 
+    $setting = new admin_setting_configcheckbox(
+        "local_ftptransfer/ftp_delete_after_transfer",
+        get_string("ftp_delete_after_transfer", "local_ftptransfer"),
+        get_string("ftp_delete_after_transfer_desc", "local_ftptransfer"),
+        1
+    );
+    $settings->add($setting);
+
     $setting = new admin_setting_configtext(
         "local_ftptransfer/ftp_destination",
         get_string("ftp_destination", "local_ftptransfer"),

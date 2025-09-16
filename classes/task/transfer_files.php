@@ -58,6 +58,18 @@ class transfer_files extends \core\task\scheduled_task {
                                 'filename' => $file,
                                 'filesize' => $ftp->get_filesize($file),
                             ]);
+
+                            if ($ftp->config->ftp_delete_after_transfer) {
+                                if ($ftp->delete($file)) {
+                                    $messages[] = get_string('deleted_file', 'local_ftptransfer', [
+                                        'filename' => $file,
+                                    ]);
+                                } else {
+                                    $messages[] = get_string('error_deleting_file', 'local_ftptransfer', [
+                                        'filename' => $file,
+                                    ]);
+                                }
+                            }
                         } else {
                             $messages[] = get_string('error_transferring_file', 'local_ftptransfer', [
                                 'filename' => $file,

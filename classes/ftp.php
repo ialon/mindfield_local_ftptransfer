@@ -110,7 +110,19 @@ class ftp {
     public function transfer($remotefile) {
         $localfile = $this->config->ftp_destination . '/' . $remotefile;
         $destination = fopen($localfile, "w");
-        return ftp_fget($this->connection, $destination, $remotefile, FTP_BINARY);
+        $result = ftp_fget($this->connection, $destination, $remotefile, FTP_BINARY);
+        return $result;
+    }
+
+    /**
+     * Deletes a remote file from the FTP server.
+     *
+     * @param string $remotefile The path to the remote file on the FTP server.
+     * @return bool
+     */
+    public function delete($remotefile) {
+        $result = ftp_delete($this->connection, $remotefile);
+        return $result;
     }
 
     /**
