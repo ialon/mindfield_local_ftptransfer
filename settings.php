@@ -63,6 +63,18 @@ if ($hassiteconfig) {
     );
     $settings->add($setting);
 
+    $setting = new admin_setting_configselect(
+        "local_ftptransfer/ftp_auth",
+        get_string("ftp_auth", "local_ftptransfer"),
+        get_string("ftp_auth_desc", "local_ftptransfer"),
+        "password",
+        [
+            "password" => get_string("ftp_auth_password", "local_ftptransfer"),
+            "keyfile" => get_string("ftp_auth_keyfile", "local_ftptransfer"),
+        ]
+    );
+    $settings->add($setting);
+
     $setting = new admin_setting_configpasswordunmask(
         "local_ftptransfer/ftp_password",
         get_string("ftp_password", "local_ftptransfer"),
@@ -70,6 +82,26 @@ if ($hassiteconfig) {
         ""
     );
     $settings->add($setting);
+
+    $setting = new admin_setting_configtext(
+        "local_ftptransfer/ftp_public_key_file",
+        get_string("ftp_public_key_file", "local_ftptransfer"),
+        get_string("ftp_public_key_file_desc", "local_ftptransfer"),
+        ""
+    );
+    $settings->add($setting);
+
+    $setting = new admin_setting_configtext(
+        "local_ftptransfer/ftp_private_key_file",
+        get_string("ftp_private_key_file", "local_ftptransfer"),
+        get_string("ftp_private_key_file_desc", "local_ftptransfer"),
+        ""
+    );
+    $settings->add($setting);
+
+    $settings->hide_if('local_ftptransfer/ftp_public_key_file', 'local_ftptransfer/ftp_auth', 'eq', 'password');
+    $settings->hide_if('local_ftptransfer/ftp_private_key_file', 'local_ftptransfer/ftp_auth', 'eq', 'password');
+    $settings->hide_if('local_ftptransfer/ftp_password', 'local_ftptransfer/ftp_auth', 'eq', 'keyfile');
 
     $setting = new admin_setting_configcheckbox(
         "local_ftptransfer/ftp_passive",

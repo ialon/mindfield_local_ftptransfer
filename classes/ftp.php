@@ -25,7 +25,6 @@
 
 namespace local_ftptransfer;
 
-use FTP\Connection;
 use Exception;
 use stdClass;
 
@@ -36,7 +35,7 @@ use stdClass;
  */
 class ftp {
     /** @var resource */
-    public ?Connection $connection = null;
+    public $connection = null;
 
     /** @var stdClass */
     public stdClass $config;
@@ -50,9 +49,12 @@ class ftp {
         $this->config = get_config('local_ftptransfer');
 
         $ftphost = $this->config->ftp_host;
-        $ftppassive = $this->config->ftp_passive;
         $ftpusername = $this->config->ftp_username;
-        $ftppassword = $this->config->ftp_password;
+        $ftpauth = $this->config->ftp_auth;
+        $ftppublickeyfile = $this->config->ftp_public_key_file ?? '';
+        $ftpprivatekeyfile = $this->config->ftp_private_key_file ?? '';
+        $ftppassword = $this->config->ftp_password ?? '';
+        $ftppassive = $this->config->ftp_passive;
 
         $url = parse_url($ftphost);
 
@@ -63,24 +65,43 @@ class ftp {
             $url["port"] = 21;
         }
 
-        if (isset($url["scheme"]) && $url["scheme"] == "ftps") {
-            $this->connection = ftp_ssl_connect($url["host"], $url["port"]);
+        if ($ftpauth == 'password') {
+            if (isset($url["scheme"]) && $url["scheme"] == "ftps") {
+                $this->connection = ftp_ssl_connect($url["host"], $url["port"]);
+            } else {
+                $this->connection = ftp_connect($url["host"], $url["port"]);
+            }
+
+            if (!$this->connection) {
+                $this->connection = null;
+                throw new Exception(get_string("ftp_error_connecting", "local_ftptransfer"));
+            }
+
+            if (!ftp_login($this->connection, $ftpusername, $ftppassword)) {
+                $this->connection = null;
+                throw new Exception(get_string("ftp_error_login", "local_ftptransfer"));
+            }
+
+            if ($ftppassive) {
+                ftp_pasv($this->connection, true);
+            }
+        } else if ($ftpauth == 'keyfile') {
+            if (!function_exists('ssh2_connect')) {
+                throw new Exception(get_string("ftp_error_phpextension", "local_ftptransfer"));
+            }
+
+            $this->connection = ssh2_connect($url["host"], $url["port"], ['hostkey' => 'ssh-rsa']);
+            if (!$this->connection) {
+                $this->connection = null;
+                throw new Exception(get_string("ftp_error_connecting", "local_ftptransfer"));
+            }
+
+            if (!ssh2_auth_pubkey_file($this->connection, $ftpusername, $ftppublickeyfile, $ftpprivatekeyfile, '') || !ssh2_sftp($this->connection)) {
+                $this->connection = null;
+                throw new Exception(get_string("ftp_error_login", "local_ftptransfer"));
+            }
         } else {
-            $this->connection = ftp_connect($url["host"], $url["port"]);
-        }
-
-        if (!$this->connection) {
-            $this->connection = null;
-            throw new Exception(get_string("ftp_error_connecting", "local_ftptransfer"));
-        }
-
-        if (!ftp_login($this->connection, $ftpusername, $ftppassword)) {
-            $this->connection = null;
-            throw new Exception(get_string("ftp_error_login", "local_ftptransfer"));
-        }
-
-        if ($ftppassive) {
-            ftp_pasv($this->connection, true);
+            throw new Exception(get_string("ftp_error_unknown_auth", "local_ftptransfer"));
         }
     }
 
@@ -90,14 +111,30 @@ class ftp {
      * @return array|false An array of file and directory names on success, or false on failure.
      */
     public function list_files() {
-        $list = ftp_nlist($this->connection, ".");
+        if ($this->config->ftp_auth == 'password') {
+            $list = ftp_nlist($this->connection, ".");
 
-        // Remove . and .. and folders.
-        foreach ($list as $key => $item) {
-            if ($item === '.' || $item === '..' || ftp_size($this->connection, $item) === -1) {
-                unset($list[$key]);
+            // Remove . and .. and folders.
+            foreach ($list as $key => $item) {
+                if ($item === '.' || $item === '..' || ftp_size($this->connection, $item) === -1) {
+                    unset($list[$key]);
+                }
             }
+        } else {
+            $sftp = ssh2_sftp($this->connection);
+            $dir = opendir("ssh2.sftp://$sftp/.");
+
+            $list = [];
+            while (false !== ($file = readdir($dir))) {
+                // Skip . and .. and folders.
+                if ($file === '.' || $file === '..' || is_dir("ssh2.sftp://$sftp/$file")) {
+                    continue;
+                }
+                $list[] = $file;
+            }
+            closedir($dir);
         }
+
         return $list;
     }
 
@@ -109,8 +146,19 @@ class ftp {
      */
     public function transfer($remotefile) {
         $localfile = $this->config->ftp_destination . '/' . $remotefile;
-        $destination = fopen($localfile, "w");
-        $result = ftp_fget($this->connection, $destination, $remotefile, FTP_BINARY);
+
+        if ($this->config->ftp_auth == 'password') {
+            $destination = fopen($localfile, "w");
+            $result = ftp_fget($this->connection, $destination, $remotefile, FTP_BINARY);
+        } else {
+            $sftp = ssh2_sftp($this->connection);
+            $source = fopen("ssh2.sftp://$sftp/$remotefile", "r");
+            $destination = fopen($localfile, "w");
+            $result = stream_copy_to_stream($source, $destination) !== false;
+            fclose($source);
+            fclose($destination);
+        }
+
         return $result;
     }
 
@@ -121,7 +169,13 @@ class ftp {
      * @return bool
      */
     public function delete($remotefile) {
-        $result = ftp_delete($this->connection, $remotefile);
+        if ($this->config->ftp_auth == 'password') {
+            $result = ftp_delete($this->connection, $remotefile);
+        } else {
+            $sftp = ssh2_sftp($this->connection);
+            $result = ssh2_sftp_unlink($sftp, $remotefile);
+        }
+
         return $result;
     }
 
@@ -132,8 +186,17 @@ class ftp {
      * @return string The formatted file size (e.g., "2 MB").
      */
     public function get_filesize($file) {
-        $size = ftp_size($this->connection, $file);
-        $size = preg_replace('/[^0-9]/', "", $size);
+        if ($this->config->ftp_auth == 'password') {
+            /**
+             * @var \FTP\Connection|resource $this->connection
+             */
+            $size = ftp_size($this->connection, $file);
+            $size = preg_replace('/[^0-9]/', "", $size);
+        } else {
+            $sftp = ssh2_sftp($this->connection);
+            $size = ssh2_sftp_stat($sftp, $file)['size'];
+        }
+
         return self::format_bytes($size);
     }
 
